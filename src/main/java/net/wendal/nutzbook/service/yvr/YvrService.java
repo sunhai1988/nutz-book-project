@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang.StringEscapeUtils;
 import org.nutz.aop.interceptor.async.Async;
 import org.nutz.dao.Cnd;
 import org.nutz.dao.Dao;
@@ -26,6 +27,8 @@ import org.nutz.dao.sql.Sql;
 import org.nutz.ioc.aop.Aop;
 import org.nutz.ioc.loader.annotation.Inject;
 import org.nutz.ioc.loader.annotation.IocBean;
+import org.nutz.json.Json;
+import org.nutz.json.JsonFormat;
 import org.nutz.lang.Files;
 import org.nutz.lang.Strings;
 import org.nutz.lang.random.R;
@@ -45,13 +48,16 @@ import net.wendal.nutzbook.bean.yvr.TopicTag;
 import net.wendal.nutzbook.bean.yvr.TopicType;
 import net.wendal.nutzbook.service.BigContentService;
 import net.wendal.nutzbook.service.PushService;
+import net.wendal.nutzbook.service.pubsub.PubSub;
+import net.wendal.nutzbook.service.pubsub.PubSubService;
 import net.wendal.nutzbook.util.RedisKey;
 import net.wendal.nutzbook.util.Toolkit;
+import net.wendal.nutzbook.websocket.NutzbookWebsocket;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Response;
 
 @IocBean(create="init")
-public class YvrService implements RedisKey {
+public class YvrService implements RedisKey, PubSub {
 	
 	private static final Log log = Logs.get();
 
@@ -63,6 +69,9 @@ public class YvrService implements RedisKey {
 	
 	@Inject
 	protected PushService pushService;
+	
+	@Inject
+	protected PubSubService pubSubService;
 	
 	@Inject
 	protected BigContentService bigContentService;
@@ -160,6 +169,7 @@ public class YvrService implements RedisKey {
 		if (0 != dao.count(Topic.class, Cnd.where("title", "=", topic.getTitle().trim()))) {
 			return _fail("相同标题已经发过了");
 		}
+		String oldTitle = topic.getTitle().trim();
 		topic.setTitle(Strings.escapeHtml(topic.getTitle().trim()));
 		topic.setUserId(userId);
 		topic.setTop(false);
@@ -167,36 +177,32 @@ public class YvrService implements RedisKey {
 		if (topic.getType() == null)
 			topic.setType(TopicType.ask);
 		topic.setContent(Toolkit.filteContent(topic.getContent()));
-		String oldContent = topic.getContent();
 		topic.setContentId(bigContentService.put(topic.getContent()));
 		topic.setContent(null);
 		dao.insert(topic);
-		try {
-			topic.setContent(oldContent);
-			topicSearchService.add(topic);
-		} catch (Exception e) {
-		}
 		// 如果是ask类型,把帖子加入到 "未回复"列表
 		Pipeline pipe = jedis().pipelined();
 		if (TopicType.ask.equals(topic.getType())) {
 			pipe.zadd(RKEY_TOPIC_NOREPLY, System.currentTimeMillis(), topic.getId());
 		}
 		pipe.zadd(RKEY_TOPIC_UPDATE + topic.getType(), System.currentTimeMillis(), topic.getId());
-		if (topic.getType() != TopicType.shortit)
+		if (topic.getType() == TopicType.ask || topic.getType() == TopicType.news) {
 			pipe.zadd(RKEY_TOPIC_UPDATE_ALL, System.currentTimeMillis(), topic.getId());
-		pipe.zincrby(RKEY_USER_SCORE, 100, ""+userId);
-		pipe.sync();
-		String replyAuthorName = dao.fetch(User.class, userId).getName();
-		for (Integer watcherId : globalWatcherIds) {
-			if (watcherId != userId)
+			pipe.zincrby(RKEY_USER_SCORE, 100, ""+userId);
+			String replyAuthorName = dao.fetch(User.class, userId).getName();
+			for (Integer watcherId : globalWatcherIds) {
+			    if (watcherId != userId)
 				pushUser(watcherId,
-						"新帖:" + topic.getTitle(),
+						"新帖:" + oldTitle,
 						topic.getId(),
 						replyAuthorName,
 						topic.getTitle(),
 						PushService.PUSH_TYPE_REPLY);
+			}
 		}
-		updateTopicTypeCount();
+        pipe.sync();
+        pubSubService.fire("ps:topic:add", topic.getId());
+        notifyWebSocket("home", "新帖:" + oldTitle, topic.getId());
 		return _ok(topic.getId());
 	}
 
@@ -221,15 +227,14 @@ public class YvrService implements RedisKey {
 		reply.setContentId(bigContentService.put(reply.getContent()));
 		reply.setContent(null);
 		dao.insert(reply);
-		// 更新索引
-		topicSearchService.add(topic);
 		// 更新topic的时间戳
 		Pipeline pipe = jedis().pipelined();
 		if (topic.isTop()) {
 			pipe.zadd(RKEY_TOPIC_TOP, reply.getCreateTime().getTime(), topicId);
 		} else {
 			pipe.zadd(RKEY_TOPIC_UPDATE + topic.getType(), reply.getCreateTime().getTime(), topicId);
-			pipe.zadd(RKEY_TOPIC_UPDATE_ALL, reply.getCreateTime().getTime(), topicId);
+			if (topic.getType() != TopicType.nb && topic.getType() != TopicType.shortit)
+			    pipe.zadd(RKEY_TOPIC_UPDATE_ALL, reply.getCreateTime().getTime(), topicId);
 		}
 		pipe.zrem(RKEY_TOPIC_NOREPLY, topicId);
 		if (topic.getTags() != null) {
@@ -243,7 +248,8 @@ public class YvrService implements RedisKey {
 		pipe.sync();
 		
 		notifyUsers(topic, reply, cnt, userId);
-		
+        pubSubService.fire("ps:topic:reply", topic.getId());
+        notifyWebSocket("topic:"+topic.getId(), "新回复: " + topic.getTitle(), topic.getId());
 		return _ok(reply.getId());
 	}
 	
@@ -300,13 +306,14 @@ public class YvrService implements RedisKey {
 	
 	@Async
 	protected void pushUser(int userId, String alert, String topic_id, String post_user, String topic_title, int type) {
+	    topic_title = StringEscapeUtils.unescapeHtml(topic_title);
 		Map<String, String> extras = new HashMap<String, String>();
 		extras.put("topic_id", topic_id);
 		extras.put("post_user", post_user);
-		extras.put("topic_title",topic_title);
+		extras.put("topic_title", topic_title);
 		// 通知类型
 		extras.put("type", type+"");
-		pushService.alert(userId, alert, extras);
+		pushService.alert(userId, alert, topic_title, extras);
 	}
 	
 	public List<Topic> getRecentTopics(int userId, Pager pager) {
@@ -348,16 +355,6 @@ public class YvrService implements RedisKey {
 		return recent_replies;
 	}
 	
-	@Aop("redis")
-	public int getUserScore(int userId) {
-		Double score = jedis().zscore(RKEY_USER_SCORE, ""+userId);
-		if (score == null) {
-			return 0;
-		} else {
-			return score.intValue();
-		}
-	}
-	
 	public NutMap upload(TempFile tmp, int userId) throws IOException {
 		NutMap re = new NutMap();
 		if (userId < 1)
@@ -394,11 +391,6 @@ public class YvrService implements RedisKey {
 	}
 	
 	static Pattern atPattern = Pattern.compile("@([a-zA-Z0-9\\_]{4,20}\\s)");
-	
-	public static void main(String[] args) {
-		String cnt = "@wendal @zozoh 这样可以吗?@qq_addfdf";
-		System.out.println(findAt(cnt, 100));
-	}
 	
 	public static Set<String> findAt(String cnt, int limit) {
 		Set<String> ats = new HashSet<String>();
@@ -510,25 +502,29 @@ public class YvrService implements RedisKey {
 			tt.count = jedis().zcount(RKEY_TOPIC_UPDATE+tt.name(), "-inf", "+inf");
 		}
 	}
-
-    @Aop("redis")
-	public Object check(String topicId, int replies) {
-        Topic topic = dao.fetch(Topic.class, topicId);
-        if (topic == null)
-            return "";
-        Double reply_count = jedis().zscore(RKEY_REPLY_COUNT, topicId);
-        if (reply_count == null)
-            reply_count = Double.valueOf(0);
-        if (reply_count.intValue() == replies) {
-            return "";
+    
+    protected void notifyWebSocket(String room, Object data, String tag) {
+        NutMap map = new NutMap();
+        map.put("action", "notify");
+        map.put("data", data);
+        map.put("options", new NutMap().setv("tag", tag));
+        String msg = Json.toJson(map, JsonFormat.compact());
+        pubSubService.fire(NutzbookWebsocket.prefix+room, msg);
+    }
+    
+    @Override
+    public void onMessage(String channel, String message) {
+        switch (channel) {
+        // TODO 数据库集群的delay会导致
+        case "ps:topic:add":
+            updateTopicTypeCount();
+            topicSearchService.add(dao.fetch(Topic.class, message));
+            break;
+        case "ps:topic:reply":
+            topicSearchService.add(dao.fetch(Topic.class, message));
+            break;
+        default:
+            break;
         }
-        String replyId = jedis().hget(RKEY_REPLY_LAST, topicId);
-        TopicReply reply = dao.fetch(TopicReply.class, replyId);
-        dao.fetchLinks(reply, null);
-
-        NutMap re = new NutMap().setv("count", reply_count.intValue());
-        re.put("data", reply.getAuthor().getNickname() + " 回复了帖子:" + topic.getTitle());
-        re.put("options", new NutMap().setv("tag", topicId));
-        return re;
     }
 }

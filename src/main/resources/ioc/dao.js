@@ -6,40 +6,55 @@ var ioc = {
 			}
 		},
 	    dataSource : {
+	        factory : "$conf#make",
+	        args : ["com.alibaba.druid.pool.DruidDataSource", "db."],
 	        type : "com.alibaba.druid.pool.DruidDataSource",
 	        events : {
 	        	create : "init",
 	            depose : 'close'
-	        },
-	        fields : {
-	            url : {java:"$conf.get('db.url')"},
-	            username : {java:"$conf.get('db.username')"},
-	            password : {java:"$conf.get('db.password')"},
-	            testWhileIdle : true,
-	            validationQuery : {java:"$conf.get('db.validationQuery')"},
-	            maxActive : {java:"$conf.get('db.maxActive')"},
-	            filters : "mergeStat",
-	            connectionProperties : "druid.stat.slowSqlMillis=2000",
-	            defaultAutoCommit : false
+	        }
+	    },
+	    slaveDataSource : {
+	        factory : "$conf#make",
+	        args : ["com.alibaba.druid.pool.DruidDataSource", "db."],
+	        type : "com.alibaba.druid.pool.DruidDataSource",
+	        events : {
+	        	create : "init",
+	            depose : 'close'
 	        }
 	    },
 		dao : {
 			type : "org.nutz.dao.impl.NutDao",
 			args : [{refer:"dataSource"}],
 			fields : {
-				executor : {refer:"cacheExecutor"}
+				//executor : {refer: "cacheExecutor"},
+				runner : {refer: "daoRunner"},
+				interceptors : [{refer:"cacheExecutor"}, "log", "time"]
+			}
+		},
+		daoRunner : {
+			type : "org.nutz.dao.impl.sql.run.NutDaoRunner",
+			fields : {
+				slaveDataSource : {refer:"slaveDataSource"}
 			}
 		},
 		cacheExecutor : {
-			type : "org.nutz.plugins.cache.dao.CachedNutDaoExecutor",
+			type : "org.nutz.plugins.cache.dao.DaoCacheInterceptor",
+			//type : "org.nutz.plugins.cache.dao.CachedNutDaoExecutor",
+			//type : "net.wendal.nutzbook.util.MasterSlaveDaoExecutor",
 			fields : {
 				cacheProvider : {refer:"cacheProvider"},
 				cachedTableNames : [ 
 				    "t_user_profile", "t_user", "t_role",
 					"t_permission", "t_role_permission", 
-					"t_topic","t_topic_reply", 
-					"t_oauth_user", "t_user_role" ]
+					"t_topic","t_topic_reply", "t_big_content",
+					"t_oauth_user", "t_user_role" ],
+				
+				//slave : {refer:"dataSource_slave"}
 		}
+	},
+	fst : {
+		type : "net.wendal.nutzbook.util.FstCacheSerializer"
 	},
 	/*
 	// 基于内存的简单LRU实现
@@ -59,7 +74,8 @@ var ioc = {
 		fields : {
 			cacheManager : {
 				refer : "cacheManager"
-			}
+			},
+			//serializer : {refer:"fst"}
 		// 引用ehcache.js中定义的CacheManager
 		},
 		events : {

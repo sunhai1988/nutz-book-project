@@ -46,6 +46,7 @@ import org.nutz.mvc.view.ServerRedirectView;
 import org.nutz.mvc.view.UTF8JsonView;
 import org.nutz.mvc.view.ViewWrapper;
 
+import org.nutz.plugins.apidoc.annotation.Api;
 import net.wendal.nutzbook.bean.CResult;
 import net.wendal.nutzbook.bean.User;
 import net.wendal.nutzbook.bean.UserProfile;
@@ -57,22 +58,19 @@ import net.wendal.nutzbook.mvc.CsrfActionFilter;
 import net.wendal.nutzbook.service.BigContentService;
 import net.wendal.nutzbook.service.PushService;
 import net.wendal.nutzbook.service.RedisDao;
-import net.wendal.nutzbook.service.UserService;
 import net.wendal.nutzbook.service.yvr.LuceneSearchResult;
 import net.wendal.nutzbook.service.yvr.TopicSearchService;
 import net.wendal.nutzbook.util.Toolkit;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Response;
 
+@Api(name="论坛模块", description="论坛相关的API")
 @IocBean(create = "init")
 @At("/yvr")
 @Fail("void")
 public class YvrModule extends BaseModule {
 
 	private static final Log log = Logs.get();
-
-	@Inject
-	protected UserService userService;
 
 	@Inject("java:$conf.getInt('topic.pageSize', 15)")
 	protected int pageSize;
@@ -99,7 +97,7 @@ public class YvrModule extends BaseModule {
 
 	@GET
 	@At
-	@Ok("beetl:yvr/_add.btl")
+	@Ok("beetl:yvr/_add.html")
 	public Object add(HttpSession session) {
 		NutMap re = new NutMap();
 		re.put("types", TopicType.values());
@@ -116,6 +114,7 @@ public class YvrModule extends BaseModule {
 	@At
 	@Ok("json")
 	@Filters(@By(type = CsrfActionFilter.class))
+	@AdaptBy(type=WhaleAdaptor.class)
 	public CResult add(@Param("..")Topic topic) {
 		int userId = Toolkit.uid();
 		return yvrService.add(topic, userId);
@@ -123,7 +122,7 @@ public class YvrModule extends BaseModule {
 
 	@At({ "/list/?", "/list/?/?", "/list" })
 	@GET
-	@Ok("beetl:/yvr/index.btl")
+	@Ok("beetl:/yvr/index.html")
 	public Object list(String type, int page) {
 		int userId = Toolkit.uid();
 		Pager pager = dao.createPager(page > 0 ? page : 1, pageSize);
@@ -133,7 +132,7 @@ public class YvrModule extends BaseModule {
 	
 	@At({ "/list/u/?/?", "/list/u/?/?/?" })
 	@GET
-	@Ok("beetl:/yvr/index.btl")
+	@Ok("beetl:/yvr/index.html")
 	public Object list(String loginname, String type, int page) {
 		int userId = Toolkit.uid();
 		Pager pager = dao.createPager(page > 0 ? page : 1, pageSize);
@@ -151,7 +150,7 @@ public class YvrModule extends BaseModule {
 	
 	@At({ "/tag/?", "/tag/?/?" })
 	@GET
-	@Ok("beetl:/yvr/index.btl")
+	@Ok("beetl:/yvr/index.html")
 	public Object tag(String tagName, int page) {
 		int userId = Toolkit.uid();
 		if (Strings.isBlank(tagName))
@@ -224,7 +223,7 @@ public class YvrModule extends BaseModule {
 
 	@GET
 	@At("/t/?")
-	@Ok("beetl:yvr/_topic.btl")
+	@Ok("beetl:yvr/_topic.html")
 	@Aop("redis")
 	public Object topic(String id, @ReqHeader("If-None-Match")String _etag,  HttpServletResponse response) {
 	    Topic topic;
@@ -246,6 +245,8 @@ public class YvrModule extends BaseModule {
         if (replyId != null && replyId.equals(_etag)) {
             return HTTP_304;
         }
+        if (replyId != null)
+            response.setHeader("ETag", replyId);
         
 		topic.setAuthor(fetch_userprofile(topic.getUserId()));
 		dao.fetchLinks(topic, "replies", Cnd.orderBy().asc("createTime"));
@@ -319,12 +320,12 @@ public class YvrModule extends BaseModule {
 
 	@GET
 	@At
-	@Ok("beetl:/yvr/index.btl")
+	@Ok("beetl:/yvr/index.html")
 	@Aop("redis")
 	public Object search(@Param("q") String keys, @Param("format")String format) throws Exception {
 	    if (Strings.isBlank(keys))
 			return new ForwardView("/yvr/list");
-		List<LuceneSearchResult> results = topicSearchService.search(keys, true, "json".equals(format) ? 5 : 30);
+		List<LuceneSearchResult> results = topicSearchService.search(keys, "json".equals(format) ? 5 : 30);
         List<Topic> list = new ArrayList<Topic>();
 		for (LuceneSearchResult result : results) {
 			Topic topic = dao.fetch(Topic.class, result.getId());
@@ -360,11 +361,19 @@ public class YvrModule extends BaseModule {
 		pushService.message(userId, "应用户要求推送到客户端打开帖子", extras);
 	}
 	
-    @Ok("json")
-    @At("/t/?/check")
-    public Object check(String topicId, @Param("replies") int replies) {
-        return yvrService.check(topicId, replies);
-    }
+//	@At("/t/?/next")
+//	@Ok("void")
+//	public Object nextTopic(String topidId) {
+//	    Topic topic = dao.fetch(Topic.class);
+//	    if (topic == null)
+//	        return HTTP_404;
+//	    
+//	}
+//	
+//	@At("/t/?/prev")
+//    public void prevTopic(String topidId) {
+//        
+//    }
 
 	public void init() {
 		log.debug("Image Dir = " + imageDir);

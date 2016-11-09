@@ -2,14 +2,16 @@ package net.wendal.nutzbook.module;
 
 import javax.servlet.http.HttpSession;
 
+import org.apache.shiro.SecurityUtils;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.apache.shiro.authz.annotation.RequiresUser;
+import org.apache.shiro.subject.Subject;
 import org.nutz.aop.interceptor.ioc.TransAop;
 import org.nutz.dao.Cnd;
 import org.nutz.dao.QueryResult;
 import org.nutz.dao.pager.Pager;
+import org.nutz.integration.shiro.SimpleShiroToken;
 import org.nutz.ioc.aop.Aop;
-import org.nutz.ioc.loader.annotation.Inject;
 import org.nutz.ioc.loader.annotation.IocBean;
 import org.nutz.lang.Strings;
 import org.nutz.lang.util.NutMap;
@@ -21,21 +23,19 @@ import org.nutz.mvc.annotation.Ok;
 import org.nutz.mvc.annotation.POST;
 import org.nutz.mvc.annotation.Param;
 
+import org.nutz.plugins.apidoc.annotation.Api;
 import net.wendal.nutzbook.annotation.SLog;
 import net.wendal.nutzbook.bean.User;
 import net.wendal.nutzbook.bean.UserProfile;
-import net.wendal.nutzbook.service.UserService;
-import net.wendal.nutzbook.shiro.realm.SimpleShiroToken;
 import net.wendal.nutzbook.util.Toolkit;
 
+@Api(name="用户管理", description="传说中的增删改查")
 @IocBean // 声明为Ioc容器中的一个Bean
 @At("/user") // 整个模块的路径前缀
 @Ok("json:{locked:'password|salt',ignoreNull:true}") // 忽略password和salt属性,忽略空属性的json输出
 @Fail("http:500") // 抛出异常的话,就走500页面
 @SLog(tag="用户管理", msg="")
 public class UserModule extends BaseModule {
-	
-	@Inject protected UserService userService;
 	
 	@At
 	public int count() { // 统计用户数的方法,算是个测试点
@@ -146,8 +146,11 @@ public class UserModule extends BaseModule {
 					  @Param("rememberMe")boolean rememberMe,
 					  @Param("captcha")String captcha) {
 		NutMap re = new NutMap().setv("ok", false);
+		Subject subject = SecurityUtils.getSubject();
+		if (subject.isAuthenticated())
+		    return re.setv("ok", true);
 		// 看看有无填写验证码
-		if (Strings.isBlank(captcha)) {
+		if (Strings.isBlank(captcha) && !"guest".equals(username)) {
 			return re.setv("msg", "必须填写验证码");
 		}
 		if (Strings.isBlank(username)) {
@@ -163,7 +166,7 @@ public class UserModule extends BaseModule {
 		}
 		// 比对验证码
 		String _captcha = (String) session.getAttribute(Toolkit.captcha_attr);
-		if (Strings.isBlank(_captcha) && !_captcha.equalsIgnoreCase(captcha)) {
+		if (!"guest".equals(username) && Strings.isBlank(_captcha) && !_captcha.equalsIgnoreCase(captcha)) {
 			return re.setv("msg", "验证码错误");
 		}
 		// 检查用户名密码
@@ -176,6 +179,7 @@ public class UserModule extends BaseModule {
 			return re.setv("msg", "密码错误");
 		}
 		Toolkit.doLogin(new SimpleShiroToken(user.getId()), user.getId());
+		subject.getSession().setAttribute("me", user);
 		return re.setv("ok", true);
 	}
 }

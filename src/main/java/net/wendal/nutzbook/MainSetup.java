@@ -1,11 +1,21 @@
 package net.wendal.nutzbook;
 
+import java.lang.management.ManagementFactory;
 import java.nio.charset.Charset;
+import java.security.SecureRandom;
+import java.sql.Driver;
+import java.sql.DriverManager;
+import java.util.Enumeration;
+
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
+import javax.net.ssl.SSLContext;
 
 import org.nutz.dao.Dao;
 import org.nutz.dao.Sqls;
 import org.nutz.dao.sql.Sql;
 import org.nutz.dao.util.Daos;
+import org.nutz.el.opt.custom.CustomMake;
 import org.nutz.integration.quartz.NutQuartzCronJobFactory;
 import org.nutz.integration.shiro.NutShiro;
 import org.nutz.ioc.Ioc;
@@ -25,14 +35,21 @@ import freemarker.template.Configuration;
 import net.sf.ehcache.CacheManager;
 import net.wendal.nutzbook.bean.User;
 import net.wendal.nutzbook.bean.UserProfile;
+import net.wendal.nutzbook.bean.msg.UserMessage;
 import net.wendal.nutzbook.bean.yvr.Topic;
 import net.wendal.nutzbook.bean.yvr.TopicReply;
+import net.wendal.nutzbook.ig.RedisIdGenerator;
 import net.wendal.nutzbook.service.AuthorityService;
 import net.wendal.nutzbook.service.BigContentService;
+import net.wendal.nutzbook.service.SysConfigureService;
 import net.wendal.nutzbook.service.UserService;
 import net.wendal.nutzbook.service.syslog.SysLogService;
 import net.wendal.nutzbook.service.yvr.YvrService;
+import net.wendal.nutzbook.shiro.cache.LCacheManager;
+import net.wendal.nutzbook.shiro.cache.RedisCache;
 import net.wendal.nutzbook.util.Markdowns;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
 
 /**
  * Nutz内核初始化完成后的操作
@@ -48,22 +65,42 @@ public class MainSetup implements Setup {
 
 	public void init(NutConfig nc) {
 		NutShiro.DefaultLoginURL = "/admin/logout";
-		// 检查环境
+		// 检查环境,必须运行在UTF-8环境
 		if (!Charset.defaultCharset().name().equalsIgnoreCase(Encoding.UTF8)) {
-			log.warn("This project must run in UTF-8, pls add -Dfile.encoding=UTF-8 to JAVA_OPTS");
+			log.error("This project must run in UTF-8, pls add -Dfile.encoding=UTF-8 to JAVA_OPTS");
 		}
+		// Log4j 2.x的JMX默认启用,会导致reload时内存不释放!!
+		if (!"true".equals(System.getProperty("log4j2.disable.jmx")))
+		    log.error("log4j2 jmx will case reload memory leak! pls add -Dlog4j2.disable.jmx=true to JAVA_OPTS");
 
 		// 获取Ioc容器及Dao对象
 		Ioc ioc = nc.getIoc();
+
+		// 初始化RedisCacheManager
+		LCacheManager.me().setupJedisPool(ioc.get(JedisPool.class));
+		RedisCache.DEBUG = true;
+
+        Dao dao = ioc.get(Dao.class);
+        
+        // 为全部标注了@Table的bean建表
+        Daos.createTablesInPackage(dao, getClass().getPackage().getName()+".bean", false);
+        Daos.migration(dao, Topic.class, true, false);
+        Daos.migration(dao, TopicReply.class, true, false);
+
+		JedisPool pool = ioc.get(JedisPool.class);
+		try (Jedis jedis = pool.getResource()) {
+            if (!jedis.exists("ig:t_user") && dao.count(User.class) > 0)
+                jedis.set("ig:t_user", ""+dao.getMaxId(User.class)+1);
+            if (!jedis.exists("ig:t_user_message") && dao.count(UserMessage.class) > 0)
+                jedis.set("ig:t_user_message", ""+dao.getMaxId(UserMessage.class)+1);
+		}
+		// 初始化redis实现的id生成器
+		CustomMake.me().register("ig", ioc.get(RedisIdGenerator.class));
+
 		// 加载freemarker自定义标签　自定义宏路径
 		ioc.get(Configuration.class).setAutoImports(new NutMap().setv("p", "/ftl/pony/index.ftl").setv("s", "/ftl/spring.ftl"));
 		ioc.get(FreeMarkerConfigurer.class, "mapTags");
-		Dao dao = ioc.get(Dao.class);
 
-		// 为全部标注了@Table的bean建表
-		Daos.createTablesInPackage(dao, getClass().getPackage().getName()+".bean", false);
-		Daos.migration(dao, Topic.class, true, false);
-		Daos.migration(dao, TopicReply.class, true, false);
 		
 		// 迁移Topic和TopicReply的数据到BigContent
 		BigContentService bcs = ioc.get(BigContentService.class);
@@ -84,6 +121,7 @@ public class MainSetup implements Setup {
 
 		// 获取配置对象
 		conf = ioc.get(PropertiesProxy.class, "conf");
+		ioc.get(SysConfigureService.class).doReload();
 
 		// 初始化SysLog,触发全局系统日志初始化
 		ioc.get(SysLogService.class);
@@ -152,5 +190,37 @@ public class MainSetup implements Setup {
 			conf.getIoc().get(Scheduler.class).shutdown(true);
 		} catch (Exception e) {
 		}
+		// 解决com.alibaba.druid.proxy.DruidDriver和com.mysql.jdbc.Driver在reload时报warning的问题
+		// 多webapp共享mysql驱动的话,以下语句删掉
+		Enumeration<Driver> en = DriverManager.getDrivers();
+		while (en.hasMoreElements()) {
+            try {
+                Driver driver = en.nextElement();
+                String className = driver.getClass().getName();
+                log.debug("deregisterDriver: " + className);
+                DriverManager.deregisterDriver(driver);
+            }
+            catch (Exception e) {
+            }
+        }
+        try {
+            MBeanServer mbeanServer = ManagementFactory.getPlatformMBeanServer();
+            ObjectName objectName = new ObjectName("com.alibaba.druid:type=MockDriver");
+            if (mbeanServer.isRegistered(objectName))
+                mbeanServer.unregisterMBean(objectName);
+            objectName = new ObjectName("com.alibaba.druid:type=DruidDriver");
+            if (mbeanServer.isRegistered(objectName))
+                mbeanServer.unregisterMBean(objectName);
+        } catch (Exception ex) {
+        }
+		
+        LCacheManager.me().depose();
+        
+        // org.brickred.socialauth.util.HttpUtil 把一个内部类注册到SSLContext,擦!
+        try {
+            SSLContext.getDefault().init(null, null, new SecureRandom());
+        }
+        catch (Exception e) {
+        }
 	}
 }

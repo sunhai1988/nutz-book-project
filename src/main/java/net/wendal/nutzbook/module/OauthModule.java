@@ -15,6 +15,7 @@ import org.brickred.socialauth.SocialAuthConfig;
 import org.brickred.socialauth.SocialAuthManager;
 import org.brickred.socialauth.exception.SocialAuthException;
 import org.brickred.socialauth.util.SocialAuthUtil;
+import org.nutz.integration.shiro.SimpleShiroToken;
 import org.nutz.ioc.loader.annotation.Inject;
 import org.nutz.ioc.loader.annotation.IocBean;
 import org.nutz.lang.Encoding;
@@ -22,7 +23,7 @@ import org.nutz.lang.Lang;
 import org.nutz.lang.Streams;
 import org.nutz.lang.Strings;
 import org.nutz.lang.random.R;
-import org.nutz.lang.stream.NullInputStream;
+import org.nutz.lang.stream.VoidInputStream;
 import org.nutz.log.Log;
 import org.nutz.log.Logs;
 import org.nutz.mvc.Mvcs;
@@ -31,23 +32,20 @@ import org.nutz.mvc.annotation.Fail;
 import org.nutz.mvc.annotation.Ok;
 import org.nutz.mvc.view.HttpStatusView;
 
+import org.nutz.plugins.apidoc.annotation.Api;
 import net.wendal.nutzbook.bean.OAuthUser;
 import net.wendal.nutzbook.bean.SysLog;
 import net.wendal.nutzbook.bean.User;
 import net.wendal.nutzbook.bean.UserProfile;
-import net.wendal.nutzbook.service.UserService;
 import net.wendal.nutzbook.service.syslog.SysLogService;
-import net.wendal.nutzbook.shiro.realm.SimpleShiroToken;
 import net.wendal.nutzbook.util.Toolkit;
 
+@Api(name="第三方登陆", description="基于SocialAuth的第三方登陆")
 @IocBean(create = "init")
 @At("/oauth")
 public class OauthModule extends BaseModule {
 	
 	private static final Log log = Logs.get();
-	
-	@Inject
-	protected UserService userService;
 	
 	@Inject
 	protected SysLogService sysLogService;
@@ -154,7 +152,7 @@ public class OauthModule extends BaseModule {
 		if (devConfig == null)
 			devConfig = getClass().getClassLoader().getResourceAsStream("oauth_consumer.properties"); // 真实环境所使用的配置文件
 		if (devConfig == null)
-			config.load(new NullInputStream());
+			config.load(new VoidInputStream());
 		else {
 			log.info("Using " + devConfig);
 			config.load(devConfig);

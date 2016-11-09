@@ -9,15 +9,21 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.nutz.plugins.apidoc.annotation.Api;
+import org.nutz.plugins.apidoc.annotation.ApiMatchMode;
+
 import net.wendal.nutzbook.bean.yvr.Topic;
 import net.wendal.nutzbook.module.BaseModule;
 import net.wendal.nutzbook.util.Markdowns;
+import net.wendal.nutzbook.util.Toolkit;
 
+import org.apache.commons.lang.StringEscapeUtils;
 import org.nutz.dao.Cnd;
 import org.nutz.ioc.impl.PropertiesProxy;
 import org.nutz.ioc.loader.annotation.Inject;
 import org.nutz.ioc.loader.annotation.IocBean;
 import org.nutz.lang.Each;
+import org.nutz.lang.Encoding;
 import org.nutz.lang.Files;
 import org.nutz.lang.Streams;
 import org.nutz.mvc.annotation.At;
@@ -41,6 +47,7 @@ import com.rometools.rome.io.SyndFeedOutput;
  * @author wendal
  *
  */
+@Api(name="SEO模块", description="负责输出rss和sitemap等SEO相关的文件", match=ApiMatchMode.NONE)
 @IocBean(create="init")
 @At("/yvr")
 @Fail("http:500")
@@ -73,7 +80,7 @@ public class YvrSeoModule extends BaseModule {
 		for (Topic topic: list) {
 			dao.fetchLinks(topic, "author");
 			entry = new SyndEntryImpl();
-            entry.setTitle(topic.getTitle());
+            entry.setTitle(StringEscapeUtils.unescapeHtml(topic.getTitle()));
             entry.setLink(urlbase + "/yvr/t/" + topic.getId());
             entry.setPublishedDate(topic.getCreateTime());
             description = new SyndContentImpl();
@@ -126,15 +133,15 @@ public class YvrSeoModule extends BaseModule {
 	 * 根据Markdown生成文档
 	 */
 	@At({"/links/?"})
-	@Ok("beetl:/yvr/website/links.btl")
+	@Ok("beetl:/yvr/website/links.html")
 	public Object page(String type) throws IOException {
 		String path = "/doc/" + type + ".md";
 		InputStream ins = getClass().getClassLoader().getResourceAsStream(path);
 		if (ins == null)
 			return HTTP_404;
-		String cnt = Streams.readAndClose(new InputStreamReader(ins));
+		String cnt = Streams.readAndClose(new InputStreamReader(ins, Encoding.CHARSET_UTF8));
 		String[] tmp = cnt.split("\n", 2);
 		String title = tmp[0].trim().split(" ", 2)[1].trim();
-		return _map("title", title, "cnt", cnt);
+		return _map("title", title, "cnt", cnt, "current_user", fetch_userprofile(Toolkit.uid()));
 	}
 }

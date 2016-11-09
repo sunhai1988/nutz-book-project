@@ -30,6 +30,8 @@ public class TestBase extends Assert {
 		if (ioc != null) {
 			ioc.depose();
 		}
+		// 主动销毁dubbo的东西
+		//ProtocolConfig.destroyAll();
 	}
 
 	protected void _before() throws Exception {}

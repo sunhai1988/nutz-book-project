@@ -9,6 +9,7 @@ import org.nutz.dao.Cnd;
 import org.nutz.dao.FieldFilter;
 import org.nutz.dao.util.Daos;
 import org.nutz.ioc.aop.Aop;
+import org.nutz.ioc.loader.annotation.Inject;
 import org.nutz.ioc.loader.annotation.IocBean;
 import org.nutz.lang.Strings;
 import org.nutz.lang.util.NutMap;
@@ -16,16 +17,24 @@ import org.nutz.mvc.annotation.At;
 import org.nutz.mvc.annotation.Ok;
 import org.nutz.mvc.annotation.Param;
 
+import org.nutz.plugins.apidoc.annotation.Api;
+import org.nutz.plugins.apidoc.annotation.ApiMatchMode;
+
 import net.wendal.nutzbook.bean.yvr.Topic;
+import net.wendal.nutzbook.service.SysConfigureService;
 import net.wendal.nutzbook.util.Toolkit;
 
+@Api(name="统计分析模块", description="聚合各种数据", match=ApiMatchMode.NONE)
 @IocBean
 @At("/analysis")
 @Ok("json")
 public class AnalysisModule extends BaseModule {
+    
+    @Inject
+    protected SysConfigureService sysConfigureService;
 
 	@At({"/", "/index"})
-	@Ok("beetl:yvr/analysis/index.btl")
+	@Ok("beetl:yvr/analysis/index.html")
 	@Aop("redis")
 	public void main() {
 	}
@@ -65,5 +74,10 @@ public class AnalysisModule extends BaseModule {
 			map.put(""+(topic.getCreateTime().getTime() / 1000), 1);
 		}
 		return map;
+	}
+	
+	@At(value="/sysconf/reload", top=true)
+	public void sysconfReload() {
+	    sysConfigureService.doReload();
 	}
 }

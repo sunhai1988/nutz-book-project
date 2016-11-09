@@ -14,7 +14,6 @@ import org.apache.shiro.authz.annotation.RequiresUser;
 import org.nutz.dao.Cnd;
 import org.nutz.http.Http;
 import org.nutz.http.Response;
-import org.nutz.ioc.loader.annotation.Inject;
 import org.nutz.ioc.loader.annotation.IocBean;
 import org.nutz.lang.Files;
 import org.nutz.lang.Lang;
@@ -35,6 +34,7 @@ import org.nutz.mvc.annotation.POST;
 import org.nutz.mvc.annotation.Param;
 import org.nutz.mvc.upload.TempFile;
 import org.nutz.mvc.view.HttpStatusView;
+import org.nutz.plugins.apidoc.annotation.Api;
 import org.nutz.trans.Atom;
 import org.nutz.trans.Trans;
 
@@ -44,9 +44,9 @@ import net.wendal.nutzbook.bean.OAuthUser;
 import net.wendal.nutzbook.bean.User;
 import net.wendal.nutzbook.bean.UserProfile;
 import net.wendal.nutzbook.module.BaseModule;
-import net.wendal.nutzbook.service.UserService;
 import net.wendal.nutzbook.util.Toolkit;
 
+@Api(name="论坛用户管理", description="注册, 修改头像,邮箱激活,用户详情页等信息")
 @At("/yvr/u")
 @IocBean(create="init")
 public class YvrUserModule extends BaseModule {
@@ -59,10 +59,7 @@ public class YvrUserModule extends BaseModule {
 	
 	protected Cache avatarCache;
 	
-	@Inject
-	protected UserService userService;
-	
-	@Ok("beetl:yvr/user/user_index.btl")
+	@Ok("beetl:yvr/user/user_index.html")
 	@RequiresUser
 	@At("/me")
 	public Object myHome() {
@@ -70,7 +67,7 @@ public class YvrUserModule extends BaseModule {
 	}
 	
 	@At("/?")
-	@Ok("beetl:yvr/user/user_index.btl")
+	@Ok("beetl:yvr/user/user_index.html")
 	public Object userHome(String userName) {
 		User user = dao.fetch(User.class, userName);
 		if (user == null)
@@ -86,7 +83,7 @@ public class YvrUserModule extends BaseModule {
 		re.put("c_user", profile);
 		if (userId > 0) {
 			UserProfile me = fetch_userprofile(userId);
-			me.setScore(yvrService.getUserScore(userId));
+			me.setScore(userService.getUserScore(userId));
 			re.put("current_user", me);
 			// 显示accessToken二维码
 			if (me.getUserId() == user.getId()) {
@@ -109,7 +106,6 @@ public class YvrUserModule extends BaseModule {
 			yvrService.resetAccessToken(user.getName());
 	}
 	
-
 	@Ok("raw:jpg")
 	@At("/?/avatar")
 	public Object userAvatar(String username, HttpServletRequest req, HttpServletResponse _resp){
@@ -135,9 +131,11 @@ public class YvrUserModule extends BaseModule {
 								while (-1 != (len = ins.read(buf)))
 									out.write(buf, 0, len);
 								buf = out.toByteArray();
+								user.getProfile().setAvatar(buf);
+								dao.update(user.getProfile(), "avatar");
 							}
 						} catch (IOException e) {
-							log.debug("load github avatar fail");
+							log.debug("load github avatar fail", e);
 						}
 					}
 				}

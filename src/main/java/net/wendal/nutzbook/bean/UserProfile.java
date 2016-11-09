@@ -126,4 +126,9 @@ public class UserProfile extends BasePojo implements Serializable {
 	public void setScore(int score) {
 		this.score = score;
 	}
+	public String getDisplayName() {
+	    if (nickname.equalsIgnoreCase(loginname))
+	        return loginname;
+	    return nickname+"("+loginname+")";
+	}
 }

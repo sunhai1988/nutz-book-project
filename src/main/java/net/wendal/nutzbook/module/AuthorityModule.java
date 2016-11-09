@@ -4,10 +4,6 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
-import net.wendal.nutzbook.bean.Permission;
-import net.wendal.nutzbook.bean.Role;
-import net.wendal.nutzbook.bean.User;
-
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.nutz.aop.interceptor.ioc.TransAop;
 import org.nutz.dao.Cnd;
@@ -25,11 +21,19 @@ import org.nutz.mvc.annotation.Ok;
 import org.nutz.mvc.annotation.POST;
 import org.nutz.mvc.annotation.Param;
 
+import org.nutz.plugins.apidoc.annotation.Api;
+import org.nutz.plugins.apidoc.annotation.ApiMatchMode;
+
+import net.wendal.nutzbook.bean.Permission;
+import net.wendal.nutzbook.bean.Role;
+import net.wendal.nutzbook.bean.User;
+
 /**
  * 角色/权限管理. 基本假设: 一个用户属于多种角色,拥有多种特许权限. 每种角色拥有多种权限
  * @author wendal
  *
  */
+@Api(name="权限角色管理", description="一个用户属于多种角色,拥有多种特许权限. 每种角色拥有多种权限", match=ApiMatchMode.NONE)
 @At("/admin/authority")
 @IocBean
 @Ok("void")//避免误写导致敏感信息泄露到服务器外
