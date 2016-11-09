@@ -52,9 +52,27 @@
 				<artifactId>jetty-maven-plugin</artifactId>
 				<version>9.3.11.v20160721</version>
 				<configuration>
-					<jvmArgs>-Dfile.encoding=UTF-8</jvmArgs>
-					<scanIntervalSeconds>5</scanIntervalSeconds>
-				</configuration>
+				    <jvmArgs>-Dfile.encoding=UTF-8</jvmArgs>
+                    <httpConnector>
+                        <port>8090</port>
+                    </httpConnector>
+                    <stopKey>shutdown</stopKey>
+                    <stopPort>9976</stopPort>
+                    <dumpOnStart>true</dumpOnStart>
+                    <webApp>
+                        <contextPath>/</contextPath>
+                    </webApp>
+                    <requestLog implementation="org.eclipse.jetty.server.NCSARequestLog">
+                        <filename>target/access-yyyy_mm_dd.log</filename>
+                        <filenameDateFormat>yyyy_MM_dd</filenameDateFormat>
+                        <logDateFormat>yyyy-MM-dd HH:mm:ss</logDateFormat>
+                        <logTimeZone>GMT+8:00</logTimeZone>
+                        <append>true</append>
+                        <logServer>true</logServer>
+                        <retainDays>120</retainDays>
+                        <logCookies>true</logCookies>
+                    </requestLog>
+                </configuration>
 				<dependencies>
 					<dependency>
 						<groupId>org.eclipse.jetty.websocket</groupId>
@@ -445,7 +463,7 @@
 		<dependency>
 			<groupId>org.nutz</groupId>
 			<artifactId>nutz</artifactId>
-			<version>1.r.59-SNAPSHOT</version>
+			<version>1.r.58</version>
 		</dependency>
 	</dependencies>
 	<version>2.9.1</version>
